@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Personal Finance App
+
+A fully local, AI-first personal finance web app built to replace a Google Sheet. Designed for a single user with an Axis Bank account (India).
+
+All data stays on your machine — no cloud, no subscriptions.
+
+## Features
+
+- **Dashboard** — monthly spend summary, category breakdown, annual expenses, subscriptions
+- **Expenses** — import Axis Bank CSV statements, auto-categorise with learned mappings, verify transactions
+- **Investments** — SIP portfolio tracker with future value projection chart
+- **Tax** — deductions tracker with inline editing (80C, 80D, HRA, etc.)
+- **Vault** — AES-256-GCM encrypted notes for credentials and sensitive info
+- **Splits** — loan EMI amortisation tables (Principal + Interest auto-split on import) and fixed split rules (e.g. a transfer → Parents + Savings + remainder)
+- **AI Chat** — floating chat widget powered by a local Ollama LLM (no data leaves your machine)
+
+## Tech Stack
+
+| Layer | Choice |
+|-------|--------|
+| Framework | Next.js 16 (App Router, Webpack) |
+| Database | SQLite via `better-sqlite3` + Drizzle ORM |
+| UI | Tailwind CSS v4 + shadcn/ui |
+| AI | Ollama (`gemma4:e4b`) at `localhost:11434` |
+| Encryption | AES-256-GCM (Node.js crypto) |
+
+## Prerequisites
+
+- Node.js 18+
+- [Ollama](https://ollama.ai) running locally with `gemma4:e4b` pulled (for AI chat)
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+# Install dependencies
+npm install
+
+# Push the database schema
+npx drizzle-kit push
+
+# Seed categories
+npx tsx scripts/add-categories.ts
+
+# Start the dev server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+> **Note:** Always use `npm run dev` — the app is configured to use Webpack. Turbopack breaks API routes.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## CSV Import
 
-## Learn More
+Supports Axis Bank statement CSV format. Drop the file on the Expenses page. The importer:
+1. Auto-detects the header row (skips bank metadata rows)
+2. Applies learned category mappings instantly
+3. Auto-splits EMI transactions using your amortisation schedule
+4. Auto-splits fixed transfers using your split rules
+5. Deduplicates — safe to re-import the same file
 
-To learn more about Next.js, take a look at the following resources:
+## Environment Variables
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Create a `.env.local` file in the project root:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```env
+VAULT_SECRET=your-32-char-secret-key-here
+```
 
-## Deploy on Vercel
+## Project Structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+src/
+├── app/
+│   ├── (app)/          # All main pages (dashboard, expenses, etc.)
+│   └── api/            # API routes
+├── components/
+│   ├── layout/         # Sidebar, header
+│   └── ui/             # shadcn/ui components
+├── db/
+│   └── schema.ts       # Full Drizzle schema
+└── lib/
+    ├── crypto.ts        # AES-256-GCM vault encryption
+    ├── keywords.ts      # Transaction keyword extraction
+    └── ollama.ts        # Local LLM client
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Backup
+
+```bash
+npx tsx scripts/backup.ts
+```
+
+Copies the SQLite database to a mounted backup destination defined in `.env.local`.
