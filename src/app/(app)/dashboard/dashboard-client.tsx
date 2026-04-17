@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import {
   TrendingUp, TrendingDown, Minus, Sparkles, Send,
-  AlertTriangle, ChevronRight, RefreshCw,
+  AlertTriangle, ChevronRight, RefreshCw, Wallet, Lock, BarChart3, ArrowRight, X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,9 +18,18 @@ interface BudgetPacing {
   categoryId: number;
   category: string;
   color: string;
+  tier: string;
   budget: number;
   spent: number;
   pct: number;
+}
+
+interface SIPStatus {
+  name: string;
+  amount: number;
+  sipDate: number;
+  executed: boolean;
+  daysAway: number;
 }
 
 interface DashboardData {
@@ -30,10 +39,20 @@ interface DashboardData {
   budgetPacing: BudgetPacing[];
   totalBudget: number;
   totalSpent: number;
+  savingsRate: number | null;
+  fy: {
+    label: string;
+    progress: number;
+    monthsElapsed: number;
+    income: number;
+    invested: number;
+    savingsRate: number | null;
+  };
   monthlyTotals: { month: string; total: number }[];
   sip: {
     total: number;
-    nextSIP: { name: string; amount: number; sipDate: number; daysAway: number } | null;
+    nextSIP: SIPStatus | null;
+    sipStatus: SIPStatus[];
     funds: { fundName: string; monthlyAmount: number; isFrozen: boolean }[];
   };
   subscriptions: { total: number; count: number };
@@ -50,19 +69,41 @@ function fmt(n: number) {
   }).format(n);
 }
 
+const TIER_ORDER = ["income", "fixed", "investment", "discretionary"] as const;
+
+const TIER_META: Record<string, { label: string; icon: React.ReactNode; description: string }> = {
+  income: {
+    label: "Income",
+    icon: <ArrowRight className="h-3.5 w-3.5" />,
+    description: "Money in",
+  },
+  fixed: {
+    label: "Fixed Commitments",
+    icon: <Lock className="h-3.5 w-3.5" />,
+    description: "EMI, rent, utilities",
+  },
+  investment: {
+    label: "Investments & Savings",
+    icon: <BarChart3 className="h-3.5 w-3.5" />,
+    description: "SIPs, savings",
+  },
+  discretionary: {
+    label: "Discretionary",
+    icon: <Wallet className="h-3.5 w-3.5" />,
+    description: "Food, shopping, lifestyle",
+  },
+};
+
 function PacingBar({ pct, monthProgress }: { pct: number; monthProgress: number }) {
   const over = pct > 100;
   const warning = pct > monthProgress + 15 && pct <= 100;
-  const good = pct <= monthProgress + 5;
 
   return (
     <div className="relative h-1.5 w-full rounded-full bg-border overflow-hidden">
-      {/* Month progress ghost */}
       <div
         className="absolute top-0 left-0 h-full rounded-full bg-border/60"
         style={{ width: `${monthProgress}%` }}
       />
-      {/* Actual spend */}
       <div
         className={cn(
           "absolute top-0 left-0 h-full rounded-full transition-all duration-500",
@@ -72,6 +113,139 @@ function PacingBar({ pct, monthProgress }: { pct: number; monthProgress: number 
         )}
         style={{ width: `${Math.min(100, pct)}%` }}
       />
+    </div>
+  );
+}
+
+// ─── Anomaly Alert Strip ──────────────────────────────────────────────────────
+
+interface Anomaly {
+  categoryId: number;
+  category: string;
+  color: string;
+  currentSpend: number;
+  median: number;
+  ratio: number;
+}
+
+function AnomalyStrip() {
+  const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
+  const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/anomalies")
+      .then(r => r.json())
+      .then((d: { anomalies: Anomaly[] }) => { setAnomalies(d.anomalies ?? []); setLoaded(true); })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  if (!loaded) return null;
+
+  const visible = anomalies.filter(a => !dismissed.has(a.categoryId));
+  if (visible.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {visible.map(a => (
+        <div key={a.categoryId} className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
+          <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <span className="text-sm font-medium text-foreground">{a.category}</span>
+            <span className="text-xs text-muted-foreground ml-2">
+              {fmt(a.currentSpend)} this month · {a.ratio}× usual ({fmt(a.median)} median)
+            </span>
+          </div>
+          <button
+            onClick={() => setDismissed(prev => new Set([...prev, a.categoryId]))}
+            className="text-muted-foreground hover:text-foreground shrink-0"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Tier Section ─────────────────────────────────────────────────────────────
+
+function TierSection({
+  tier,
+  items,
+  monthProgress,
+}: {
+  tier: string;
+  items: BudgetPacing[];
+  monthProgress: number;
+}) {
+  if (items.length === 0) return null;
+
+  const meta = TIER_META[tier] ?? { label: tier, icon: null, description: "" };
+  const totalBudget = items.reduce((s, i) => s + i.budget, 0);
+  const totalSpent = items.reduce((s, i) => s + i.spent, 0);
+  const overallPct = totalBudget > 0 ? Math.min(100, Math.round((totalSpent / totalBudget) * 100)) : 0;
+  const isOver = totalSpent > totalBudget;
+  const isWarning = overallPct > monthProgress + 15 && !isOver;
+
+  return (
+    <div>
+      {/* Tier header */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className={cn(
+            "text-muted-foreground",
+            isOver ? "text-destructive" : isWarning ? "text-amber-600 dark:text-amber-400" : ""
+          )}>
+            {meta.icon}
+          </span>
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {meta.label}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 tabular-nums text-xs text-muted-foreground">
+          <span className={cn(isOver ? "text-destructive font-medium" : "")}>{fmt(totalSpent)}</span>
+          <span className="text-border/60">of</span>
+          <span>{fmt(totalBudget)}</span>
+          <span className={cn(
+            "w-8 text-right font-medium",
+            isOver ? "text-destructive" : isWarning ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+          )}>
+            {overallPct}%
+          </span>
+        </div>
+      </div>
+
+      {/* Category rows */}
+      <div className="rounded-xl border border-border overflow-hidden">
+        {items.map((item, i) => (
+          <div
+            key={item.categoryId}
+            className={cn(
+              "px-3 py-2.5 space-y-1.5",
+              i < items.length - 1 && "border-b border-border"
+            )}
+          >
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-foreground">{item.category}</span>
+              <div className="flex items-center gap-3 tabular-nums text-muted-foreground">
+                <span>{fmt(item.spent)}</span>
+                <span className="text-border/60">·</span>
+                <span>{fmt(item.budget)}</span>
+                <span className={cn(
+                  "w-8 text-right font-medium",
+                  item.pct > 100 ? "text-destructive" :
+                  item.pct > monthProgress + 15 ? "text-amber-600 dark:text-amber-400" :
+                  "text-muted-foreground"
+                )}>
+                  {item.pct}%
+                </span>
+              </div>
+            </div>
+            <PacingBar pct={item.pct} monthProgress={monthProgress} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -117,7 +291,6 @@ function ScenarioPlanner() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Suggestion chips */}
         <div className="flex flex-wrap gap-2">
           {suggestions.map((s) => (
             <button
@@ -129,8 +302,6 @@ function ScenarioPlanner() {
             </button>
           ))}
         </div>
-
-        {/* Input */}
         <div className="flex gap-2">
           <input
             type="text"
@@ -146,15 +317,9 @@ function ScenarioPlanner() {
             disabled={loading || !question.trim()}
             className="shrink-0"
           >
-            {loading ? (
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Send className="h-3.5 w-3.5" />
-            )}
+            {loading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
           </Button>
         </div>
-
-        {/* Answer */}
         {answer && (
           <div className="rounded-lg bg-muted p-3 text-sm text-foreground leading-relaxed whitespace-pre-wrap">
             {answer}
@@ -181,15 +346,76 @@ export function DashboardClient() {
   if (loading) return <DashboardSkeleton />;
   if (!data) return <p className="text-muted-foreground text-sm">Failed to load data.</p>;
 
-  const remaining = data.totalBudget - data.totalSpent;
-  const overallPct = Math.round((data.totalSpent / data.totalBudget) * 100);
+  // Group budget pacing by tier
+  const byTier = TIER_ORDER.reduce<Record<string, BudgetPacing[]>>((acc, t) => {
+    acc[t] = data.budgetPacing.filter(b => b.tier === t).sort((a, b) => b.pct - a.pct);
+    return acc;
+  }, {});
+
+  // Derive summary figures from tier groups
+  const incomeBudget = byTier.income.reduce((s, i) => s + i.budget, 0);
+  const incomeSpent  = byTier.income.reduce((s, i) => s + i.spent, 0);
+
+  const fixedTotal    = byTier.fixed.reduce((s, i) => s + i.budget, 0);
+  const fixedSpent    = byTier.fixed.reduce((s, i) => s + i.spent, 0);
+
+  const investTotal   = byTier.investment.reduce((s, i) => s + i.budget, 0);
+  const investSpent   = byTier.investment.reduce((s, i) => s + i.spent, 0);
+
+  const discTotal     = byTier.discretionary.reduce((s, i) => s + i.budget, 0);
+  const discSpent     = byTier.discretionary.reduce((s, i) => s + i.spent, 0);
+
+  const committedBudget = fixedTotal + investTotal;
+  const committedSpent  = fixedSpent + investSpent;
+
+  // Discretionary headroom = income budget − committed − discretionary budget
+  const headroom = incomeBudget - committedBudget - discTotal;
+
+  const overallPct = data.totalBudget > 0 ? Math.round((data.totalSpent / data.totalBudget) * 100) : 0;
   const onTrack = overallPct <= data.monthProgress + 5;
 
   return (
     <div className="space-y-6">
+
+      {/* ── FY progress bar ── */}
+      <Card className="bg-muted/30">
+        <CardContent className="pt-4 pb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex-1 space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-foreground">FY {data.fy.label}</span>
+                <span className="text-muted-foreground tabular-nums">
+                  {data.fy.monthsElapsed} of 12 months · {data.fy.progress}%
+                </span>
+              </div>
+              <div className="h-2 w-full rounded-full bg-border overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-foreground/40 transition-all"
+                  style={{ width: `${data.fy.progress}%` }}
+                />
+              </div>
+            </div>
+            {data.fy.savingsRate !== null && (
+              <div className="shrink-0 text-right">
+                <p className="text-xs text-muted-foreground">FY savings rate</p>
+                <p className={cn(
+                  "text-lg font-semibold tabular-nums",
+                  data.fy.savingsRate >= 20 ? "text-emerald-600 dark:text-emerald-400" :
+                  data.fy.savingsRate >= 10 ? "text-amber-600 dark:text-amber-400" :
+                  "text-destructive"
+                )}>
+                  {data.fy.savingsRate}%
+                </p>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* ── Top summary row ── */}
       <div className="grid grid-cols-3 gap-4">
-        {/* Total spend */}
+
+        {/* Total spend + savings rate */}
         <Card>
           <CardContent className="pt-5">
             <p className="text-xs text-muted-foreground mb-1">Spent this month</p>
@@ -197,16 +423,15 @@ export function DashboardClient() {
               {fmt(data.totalSpent)}
             </p>
             <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-              of {fmt(data.totalBudget)} budget
+              of {fmt(data.totalBudget)} total budget
             </p>
             <div className="mt-3 flex items-center gap-1.5">
-              {onTrack ? (
-                <TrendingDown className="h-3.5 w-3.5 text-emerald-500" />
-              ) : overallPct > data.monthProgress + 15 ? (
-                <TrendingUp className="h-3.5 w-3.5 text-destructive" />
-              ) : (
-                <Minus className="h-3.5 w-3.5 text-muted-foreground" />
-              )}
+              {onTrack
+                ? <TrendingDown className="h-3.5 w-3.5 text-emerald-500" />
+                : overallPct > data.monthProgress + 15
+                  ? <TrendingUp className="h-3.5 w-3.5 text-destructive" />
+                  : <Minus className="h-3.5 w-3.5 text-muted-foreground" />
+              }
               <span className={cn(
                 "text-xs tabular-nums",
                 onTrack ? "text-emerald-600 dark:text-emerald-400" :
@@ -216,105 +441,106 @@ export function DashboardClient() {
                 {overallPct}% used · {data.monthProgress}% of month
               </span>
             </div>
+            {data.savingsRate !== null && (
+              <div className="mt-2 pt-2 border-t border-border">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Savings rate</span>
+                  <span className={cn(
+                    "font-semibold tabular-nums",
+                    data.savingsRate >= 20 ? "text-emerald-600 dark:text-emerald-400" :
+                    data.savingsRate >= 10 ? "text-amber-600 dark:text-amber-400" :
+                    "text-destructive"
+                  )}>
+                    {data.savingsRate}%
+                  </span>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Remaining */}
+        {/* Fixed + Investments committed */}
         <Card>
           <CardContent className="pt-5">
-            <p className="text-xs text-muted-foreground mb-1">Remaining</p>
+            <p className="text-xs text-muted-foreground mb-1">Committed</p>
+            <p className="text-2xl font-semibold tabular-nums tracking-tight">
+              {fmt(committedSpent)}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+              of {fmt(committedBudget)} planned
+            </p>
+            <div className="mt-3 space-y-1">
+              <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+                <span>Fixed</span><span>{fmt(fixedSpent)}</span>
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+                <span>Investments</span><span>{fmt(investSpent)}</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Discretionary headroom */}
+        <Card>
+          <CardContent className="pt-5">
+            <p className="text-xs text-muted-foreground mb-1">Discretionary</p>
             <p className={cn(
               "text-2xl font-semibold tabular-nums tracking-tight",
-              remaining < 0 ? "text-destructive" : "text-foreground"
+              discSpent > discTotal ? "text-destructive" : "text-foreground"
             )}>
-              {fmt(Math.abs(remaining))}
+              {fmt(discTotal - discSpent)}
             </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {remaining < 0 ? "over budget" : `${data.daysRemaining} days left`}
+            <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+              {discSpent > discTotal ? "over budget" : `remaining of ${fmt(discTotal)}`}
             </p>
-            {remaining > 0 && (
+            {data.daysRemaining > 0 && discTotal > discSpent && (
               <p className="text-xs text-muted-foreground mt-3 tabular-nums">
-                ~{fmt(Math.round(remaining / data.daysRemaining))}/day available
+                ~{fmt(Math.round((discTotal - discSpent) / data.daysRemaining))}/day
               </p>
             )}
-          </CardContent>
-        </Card>
-
-        {/* SIP */}
-        <Card>
-          <CardContent className="pt-5">
-            <p className="text-xs text-muted-foreground mb-1">Monthly SIPs</p>
-            <p className="text-2xl font-semibold tabular-nums tracking-tight">
-              {fmt(data.sip.total)}
-            </p>
-            {data.sip.nextSIP && (
-              <p className="text-xs text-muted-foreground mt-1 truncate">
-                Next: {data.sip.nextSIP.name.split(" ")[0]} in{" "}
-                {data.sip.nextSIP.daysAway === 0
-                  ? "today"
-                  : `${data.sip.nextSIP.daysAway}d`}
+            {headroom > 0 && (
+              <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+                {fmt(headroom)} unallocated
               </p>
             )}
-            <p className="text-xs text-muted-foreground mt-3 tabular-nums">
-              +{fmt(data.subscriptions.total)} subs
-            </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* ── Budget pacing ── */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm font-semibold">
-              Budget Pacing — {format(new Date(), "MMMM yyyy")}
-            </CardTitle>
-            <Badge variant="outline" className="text-xs tabular-nums">
-              Day {new Date().getDate()} of{" "}
-              {new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate()}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {data.budgetPacing.map((item) => (
-              <div key={item.categoryId} className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium text-foreground">{item.category}</span>
-                  <div className="flex items-center gap-3 tabular-nums text-muted-foreground">
-                    <span>{fmt(item.spent)}</span>
-                    <span className="text-border">·</span>
-                    <span>{fmt(item.budget)}</span>
-                    <span className={cn(
-                      "w-8 text-right font-medium",
-                      item.pct > 100 ? "text-destructive" :
-                      item.pct > data.monthProgress + 15 ? "text-amber-600 dark:text-amber-400" :
-                      "text-muted-foreground"
-                    )}>
-                      {item.pct}%
-                    </span>
-                  </div>
-                </div>
-                <PacingBar pct={item.pct} monthProgress={data.monthProgress} />
-              </div>
-            ))}
-          </div>
+      {/* ── Anomaly alerts ── */}
+      <AnomalyStrip />
 
-          {/* Legend */}
-          <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1.5">
-              <div className="h-1.5 w-4 rounded-full bg-foreground" />
-              <span>Spent</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="h-1.5 w-4 rounded-full bg-border/60" />
-              <span>Month progress ({data.monthProgress}%)</span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* ── Month progress header ── */}
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-semibold text-foreground">
+          {format(new Date(), "MMMM yyyy")}
+        </span>
+        <Badge variant="outline" className="text-xs tabular-nums">
+          Day {new Date().getDate()} of{" "}
+          {new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate()}
+        </Badge>
+        <div className="flex-1 h-1 rounded-full bg-border overflow-hidden">
+          <div
+            className="h-full rounded-full bg-foreground/30"
+            style={{ width: `${data.monthProgress}%` }}
+          />
+        </div>
+        <span className="text-xs text-muted-foreground tabular-nums">{data.monthProgress}%</span>
+      </div>
 
-      {/* ── Bottom row: Scenario + LTGS ── */}
+      {/* ── 3-Tier budget pacing ── */}
+      <div className="space-y-6">
+        {TIER_ORDER.map(tier => (
+          <TierSection
+            key={tier}
+            tier={tier}
+            items={byTier[tier] ?? []}
+            monthProgress={data.monthProgress}
+          />
+        ))}
+      </div>
+
+      {/* ── Bottom row: Scenario + Sidebar ── */}
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2">
           <ScenarioPlanner />
@@ -350,20 +576,51 @@ export function DashboardClient() {
             </Card>
           )}
 
-          {/* Quick nav to investments */}
-          <Card className="cursor-pointer hover:bg-muted/50 transition-colors group">
+          {/* SIP execution status */}
+          <Card>
             <CardContent className="pt-5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between mb-3">
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">Investments</p>
+                  <p className="text-xs text-muted-foreground mb-1">Monthly SIPs</p>
                   <p className="text-xl font-semibold tabular-nums">
                     {fmt(data.sip.total)}<span className="text-sm font-normal text-muted-foreground">/mo</span>
                   </p>
                 </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
               </div>
-              <p className="text-xs text-muted-foreground mt-3">
-                {data.sip.funds.filter(f => !f.isFrozen).length} active SIPs
+              {data.sip.sipStatus.length > 0 && (
+                <div className="space-y-1.5">
+                  {data.sip.sipStatus.map(s => (
+                    <div key={s.name} className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <div className={cn(
+                          "h-1.5 w-1.5 rounded-full shrink-0",
+                          s.executed ? "bg-emerald-500" : "bg-amber-400"
+                        )} />
+                        <span className="text-muted-foreground truncate">{s.name.split(" ")[0]}</span>
+                      </div>
+                      <span className={cn(
+                        "tabular-nums shrink-0 ml-2",
+                        s.executed ? "text-muted-foreground" : "text-foreground"
+                      )}>
+                        {s.executed ? `✓ ${s.sipDate}th` : `${s.sipDate}th${s.daysAway === 0 ? " (today)" : ` (${s.daysAway}d)`}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Subscriptions */}
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-xs text-muted-foreground mb-1">Subscriptions</p>
+              <p className="text-xl font-semibold tabular-nums">
+                {fmt(data.subscriptions.total)}<span className="text-sm font-normal text-muted-foreground">/mo</span>
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {data.subscriptions.count} active
               </p>
             </CardContent>
           </Card>

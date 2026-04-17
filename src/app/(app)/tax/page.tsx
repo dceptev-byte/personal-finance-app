@@ -1,15 +1,25 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle, Pencil, Check, X } from "lucide-react";
+import { AlertTriangle, CheckCircle, Pencil, Check, X, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 interface TaxDeduction { id: number; section: string; description: string; limit: number; used: number; financialYear: string }
 interface LTGSTracker { id: number; financialYear: string; exemptionLimit: number; used: number; notes: string | null }
-interface TaxData { deductions: TaxDeduction[]; ltgs: LTGSTracker | null }
+interface FYActuals {
+  fy: string;
+  currentMonth: string;
+  investedTotal: number;
+  projectedFYTotal: number;
+  byCategory: { categoryId: number | null; categoryName: string; total: number }[];
+  monthlyBreakdown: { month: string; total: number }[];
+  limit80C: number;
+}
+interface TaxData { deductions: TaxDeduction[]; ltgs: LTGSTracker | null; fyActuals: FYActuals | null }
 
 function fmt(n: number) {
   if (n >= 100000) return `₹${(n / 100000).toFixed(n % 100000 === 0 ? 0 : 1)}L`;
@@ -70,6 +80,83 @@ function EditableAmount({
   );
 }
 
+// ── 80C Tracker Widget ────────────────────────────────────────────────────────
+
+function EightyCTracker({ actuals }: { actuals: FYActuals }) {
+  const pct = Math.min(100, Math.round((actuals.investedTotal / actuals.limit80C) * 100));
+  const projPct = Math.min(100, Math.round((actuals.projectedFYTotal / actuals.limit80C) * 100));
+  const remaining = actuals.limit80C - actuals.investedTotal;
+  const onTrack = projPct >= 95;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            80C — Investment Tracker
+          </CardTitle>
+          <Badge variant="outline" className="text-xs">FY {actuals.fy}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Main progress */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">Invested so far (from transactions)</span>
+            <span className="tabular-nums font-semibold">{fmt(actuals.investedTotal)} / {fmt(actuals.limit80C)}</span>
+          </div>
+          <div className="relative h-3 w-full rounded-full bg-border overflow-hidden">
+            {/* Projected bar */}
+            <div
+              className="absolute top-0 left-0 h-full rounded-full bg-border/50"
+              style={{ width: `${projPct}%` }}
+            />
+            {/* Actual bar */}
+            <div
+              className={cn(
+                "absolute top-0 left-0 h-full rounded-full transition-all",
+                pct >= 100 ? "bg-emerald-500" : "bg-foreground"
+              )}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>{pct}% utilised</span>
+            {remaining > 0 && (
+              <span className="tabular-nums">
+                {fmt(remaining)} remaining
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Projection */}
+        <div className={cn(
+          "rounded-lg px-3 py-2 text-xs flex items-center justify-between",
+          onTrack ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        )}>
+          <span>FY projection at current pace</span>
+          <span className="font-semibold tabular-nums">{fmt(actuals.projectedFYTotal)}</span>
+        </div>
+
+        {/* Per-category breakdown */}
+        {actuals.byCategory.length > 0 && (
+          <div className="space-y-1 pt-1">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">By fund / category</p>
+            {actuals.byCategory.sort((a, b) => b.total - a.total).map(cat => (
+              <div key={cat.categoryId ?? cat.categoryName} className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground truncate">{cat.categoryName}</span>
+                <span className="tabular-nums font-medium shrink-0 ml-2">{fmt(cat.total)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Deduction Row ─────────────────────────────────────────────────────────────
 
 function DeductionRow({ d, onUpdate }: { d: TaxDeduction; onUpdate: (id: number, used: number) => void }) {
@@ -119,7 +206,7 @@ export default function TaxPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/tax").then(r => r.json()).then((d: TaxData) => setData(d)).finally(() => setLoading(false));
+    fetch("/api/tax").then(r => r.json()).then((d: TaxData) => setData(d as TaxData)).finally(() => setLoading(false));
   }, []);
 
   function updateDeduction(id: number, used: number) {
@@ -149,6 +236,9 @@ export default function TaxPage() {
 
   return (
     <div className="space-y-6">
+      {/* 80C Tracker */}
+      {data.fyActuals && <EightyCTracker actuals={data.fyActuals} />}
+
       {/* Summary */}
       <div className="grid grid-cols-3 gap-4">
         <Card>

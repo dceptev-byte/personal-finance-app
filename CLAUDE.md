@@ -31,11 +31,13 @@ If the server isn't running, start it in the background and check `/tmp/nextjs.l
 ## Database schema (key tables)
 - `transactions` — core table; has `isSplit`, `parentId`, `splitLabel` for split children
 - `imports` — tracks CSV uploads
-- `categories` — expense categories (seeded, includes: Food, Transport, Shopping, Entertainment, Utilities, Health, Household, Parents, Subscriptions, Savings/ER, Investments, Income, EMI Principal, EMI Interest)
+- `categories` — has `tier` field: "income" | "fixed" | "investment" | "discretionary"
+- `budgets` — monthly budget per category (`categoryId`, `month` yyyy-MM, `amount`)
 - `categoryMappings` — keyword → categoryId, grows as user verifies transactions (auto-learned)
 - `loans` + `amortisation_schedule` — EMI split logic; match keyword → look up principal/interest by month
 - `split_rules` + `split_rule_items` — fixed amount splits (e.g. ₹65,006 → Parents ₹15k + Savings ₹50k + remainder)
-- `investments`, `sipPlans`, `annualExpenses`, `subscriptions`, `taxDeductions`, `vaultEntries`
+- `investments`, `annualExpenses`, `subscriptions`, `taxDeductions`, `vaultEntries`
+- `assets` + `net_worth_snapshots` — net worth tracking (assets by type, monthly snapshots)
 
 ## CSV Import (Axis Bank format)
 - Axis Bank has ~10 metadata rows before real headers (`Tran Date, PARTICULARS, DR, CR, BAL`)
@@ -55,13 +57,20 @@ If the server isn't running, start it in the background and check `/tmp/nextjs.l
 ## Pages
 | Route | Description |
 |-------|-------------|
-| `/dashboard` | Monthly summary, category breakdown, annual expenses, subscriptions |
-| `/expenses` | Transaction list with CSV import, categorisation, split expansion |
+| `/dashboard` | 3-tier cash flow (Income/Fixed/Investments/Discretionary), FY progress, savings rate, anomaly alerts, SIP execution status |
+| `/expenses` | Transaction list with CSV import, categorisation, split expansion, verify-all |
 | `/investments` | SIP portfolio with projection chart (editable via modal) |
-| `/tax` | Tax deductions tracker with inline editing |
+| `/tax` | 80C investment tracker (auto from transactions), tax deductions, LTGS |
 | `/vault` | AES-256-GCM encrypted notes/credentials |
 | `/splits` | Loan amortisation tables + fixed split rules |
-| `/admin` | Category management, data tools |
+| `/net-worth` | Assets by type, liabilities from loan balances, monthly snapshots |
+| `/admin` | Monthly budget editor (per-category, by tier, copy-from-prev), DB/Ollama/Backup status |
+
+## Key utilities
+- `src/lib/fy.ts` — Indian FY helpers (April–March): `getFY()`, `getFYProgress()`, `getFYMonths()`, `getFYStart()`
+- `src/app/api/budgets/route.ts` — GET/POST/PUT budget CRUD with copy-month
+- `src/app/api/anomalies/route.ts` — 6-month median analysis, flags >2× median spend
+- `src/app/api/net-worth/route.ts` — assets CRUD + liability from loan schedules
 
 ## AI Chat Widget
 - Floating Sparkles FAB bottom-right, available on all pages
@@ -70,10 +79,11 @@ If the server isn't running, start it in the background and check `/tmp/nextjs.l
 
 ## Pending / known todos
 - Merge categorise + verify into single click on expense rows
-- "Verify all categorised" bulk button
 - Auto-advance to next uncategorised row after picking category
 - Verification progress bar (e.g. "312 / 435 verified")
 - The ₹10K `UPI/P2M/.../LIC HFL/...` transaction is a top-up payment toward the LIC EMI; user handles manually
+- Anomaly detection: LLM explanation for flagged categories (future — add to anomalies API)
+- Net worth: investment portfolio value auto-sync from investments table `currentValue` field
 
 ## Git
 - Remote: `https://github.com/dceptev-byte/personal-finance-app.git`

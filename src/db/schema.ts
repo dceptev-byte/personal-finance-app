@@ -9,6 +9,8 @@ export const categories = sqliteTable("categories", {
   name: text("name").notNull().unique(),        // e.g. "Household", "Transport"
   color: text("color").notNull().default("#6366f1"),
   icon: text("icon"),
+  // Tier controls dashboard grouping: "fixed" | "investment" | "income" | "discretionary"
+  tier: text("tier").notNull().default("discretionary"),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
 });
 
@@ -197,6 +199,29 @@ export const splitRuleItems = sqliteTable("split_rule_items", {
 });
 
 // ─────────────────────────────────────────────
+// NET WORTH — ASSETS
+// ─────────────────────────────────────────────
+export const assets = sqliteTable("assets", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),                  // "HDFC Savings", "Flat - Kochi", "Kuvera Portfolio"
+  type: text("type").notNull(),                  // "bank" | "property" | "investment" | "epf" | "other"
+  currentValue: real("current_value").notNull().default(0),
+  notes: text("notes"),
+  updatedAt: text("updated_at").default(sql`(datetime('now'))`),
+  createdAt: text("created_at").default(sql`(datetime('now'))`),
+});
+
+// Monthly snapshot for net worth history
+export const netWorthSnapshots = sqliteTable("net_worth_snapshots", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  month: text("month").notNull(),                // "2026-04"
+  totalAssets: real("total_assets").notNull().default(0),
+  totalLiabilities: real("total_liabilities").notNull().default(0),
+  netWorth: real("net_worth").notNull().default(0),
+  createdAt: text("created_at").default(sql`(datetime('now'))`),
+});
+
+// ─────────────────────────────────────────────
 // CATEGORY MAPPINGS (learned from user verifications)
 // ─────────────────────────────────────────────
 export const categoryMappings = sqliteTable("category_mappings", {
@@ -239,3 +264,6 @@ export type Loan = typeof loans.$inferSelect;
 export type AmortisationRow = typeof amortisationSchedule.$inferSelect;
 export type SplitRule = typeof splitRules.$inferSelect;
 export type SplitRuleItem = typeof splitRuleItems.$inferSelect;
+export type Asset = typeof assets.$inferSelect;
+export type NewAsset = typeof assets.$inferInsert;
+export type NetWorthSnapshot = typeof netWorthSnapshots.$inferSelect;

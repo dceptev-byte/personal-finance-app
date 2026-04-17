@@ -11,6 +11,7 @@ import {
   Scissors,
   Settings,
   ChevronRight,
+  PieChart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +45,11 @@ const navItems = [
     label: "Splits",
     href: "/splits",
     icon: Scissors,
+  },
+  {
+    label: "Net Worth",
+    href: "/net-worth",
+    icon: PieChart,
   },
 ];
 
