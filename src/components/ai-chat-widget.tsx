@@ -50,7 +50,12 @@ export function AIChatWidget() {
       });
 
       if (!res.ok || !res.body) {
-        setMessages(m => m.slice(0, -1).concat({ role: "assistant", content: "AI request failed. Is Ollama running?" }));
+        let errMsg = "AI request failed.";
+        try {
+          const data = await res.json() as { error?: string };
+          errMsg = data.error ?? errMsg;
+        } catch { /* ignore parse error */ }
+        setMessages(m => m.slice(0, -1).concat({ role: "assistant", content: `⚠️ ${errMsg}` }));
         return;
       }
 
@@ -68,7 +73,7 @@ export function AIChatWidget() {
         });
       }
     } catch {
-      setMessages(m => m.slice(0, -1).concat({ role: "assistant", content: "Could not reach Ollama. Is it running?" }));
+      setMessages(m => m.slice(0, -1).concat({ role: "assistant", content: "⚠️ Could not reach Ollama. Make sure it's running: `ollama serve`" }));
     } finally {
       setLoading(false);
     }

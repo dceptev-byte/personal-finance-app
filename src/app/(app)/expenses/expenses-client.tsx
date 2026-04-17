@@ -451,7 +451,12 @@ export function ExpensesClient() {
 
   useEffect(() => { loadTxs(month); }, [month]);
   useEffect(() => {
-    fetch("/api/categories").then((r) => r.json()).then((d: Category[]) => setCategories(d));
+    fetch("/api/categories").then((r) => r.json()).then((d: Category[]) => {
+      setCategories(d);
+      if (d.length === 0) {
+        toast.warning("No categories found. Run: npx tsx scripts/add-categories.ts", { duration: 10000 });
+      }
+    });
   }, []);
 
   function updateTx(id: number, patch: Partial<Transaction>) {

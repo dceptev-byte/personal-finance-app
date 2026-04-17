@@ -63,8 +63,16 @@ Supports Axis Bank statement CSV format. Drop the file on the Expenses page. The
 Create a `.env.local` file in the project root:
 
 ```env
-VAULT_SECRET=your-32-char-secret-key-here
+ENCRYPTION_KEY=<64-char hex string — 32 random bytes as hex>
+BACKUP_DEST="/Volumes/Your Drive/finance-backups"
 ```
+
+Generate a key with:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+> ⚠️ Store `ENCRYPTION_KEY` in a password manager. If lost, all Vault entries become unrecoverable. The app will crash on startup without it.
 
 ## Project Structure
 
