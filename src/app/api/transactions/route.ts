@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { transactions, categories } from "@/db/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, isNotNull } from "drizzle-orm";
 import { format } from "date-fns";
 
 export async function GET(req: NextRequest) {
@@ -67,5 +67,24 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("[transactions POST]", err);
     return NextResponse.json({ error: "Failed to create transaction" }, { status: 500 });
+  }
+}
+
+// PATCH /api/transactions?action=verify-all&month=2026-04
+// Verifies all transactions in a month that have a category assigned
+export async function PATCH(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const month = searchParams.get("month") ?? format(new Date(), "yyyy-MM");
+    await db.update(transactions)
+      .set({ isVerified: true, updatedAt: new Date().toISOString() })
+      .where(and(
+        eq(transactions.month, month),
+        isNotNull(transactions.categoryId),
+      ));
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("[transactions PATCH bulk]", err);
+    return NextResponse.json({ error: "Failed to verify all" }, { status: 500 });
   }
 }

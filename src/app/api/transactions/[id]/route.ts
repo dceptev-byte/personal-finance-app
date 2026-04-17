@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { transactions, categoryMappings } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, and } from "drizzle-orm";
 import { extractKeyword, isKeywordUseful } from "@/lib/keywords";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -41,6 +41,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
               updatedAt: new Date().toISOString(),
             },
           });
+      }
+    }
+
+    // Auto-approve parent when all its children are now verified
+    if (body.isVerified && updated.parentId) {
+      const siblings = await db.select({ isVerified: transactions.isVerified })
+        .from(transactions)
+        .where(eq(transactions.parentId, updated.parentId));
+      const allVerified = siblings.length > 0 && siblings.every(s => s.isVerified);
+      if (allVerified) {
+        await db.update(transactions)
+          .set({ isVerified: true, updatedAt: new Date().toISOString() })
+          .where(eq(transactions.id, updated.parentId));
       }
     }
 

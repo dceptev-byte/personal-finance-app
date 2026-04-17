@@ -504,6 +504,16 @@ export function ExpensesClient() {
           <span className="text-sm text-muted-foreground tabular-nums">
             {topLevel.length} transactions · {fmt(total)}
           </span>
+          {unverified > 0 && (
+            <Button size="sm" variant="outline" onClick={async () => {
+              await fetch(`/api/transactions?month=${month}`, { method: "PATCH" });
+              await loadTxs(month);
+              toast.success("All categorised transactions verified");
+            }}>
+              <Check className="h-3.5 w-3.5 mr-1" />
+              Verify all
+            </Button>
+          )}
           <Button size="sm" onClick={() => setShowAdd(true)}>
             <Plus className="h-3.5 w-3.5 mr-1" />
             Add

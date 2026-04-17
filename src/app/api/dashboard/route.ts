@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { transactions, budgets, categories, investments, subscriptions, ltgsTracker } from "@/db/schema";
-import { eq, and, sum, sql } from "drizzle-orm";
+import { eq, and, sum, sql, ne, isNotNull } from "drizzle-orm";
 import { format } from "date-fns";
 
 export async function GET() {
@@ -26,7 +26,11 @@ export async function GET() {
         spent: sum(transactions.amount).as("spent"),
       })
       .from(transactions)
-      .where(eq(transactions.month, currentMonth))
+      .where(and(
+        eq(transactions.month, currentMonth),
+        ne(transactions.isSplit, true),   // exclude split parents (children carry the real amounts)
+        isNotNull(transactions.categoryId),
+      ))
       .groupBy(transactions.categoryId);
 
     const spentMap: Record<number, number> = {};
@@ -50,7 +54,8 @@ export async function GET() {
       .sort((a, b) => b.pct - a.pct);
 
     const totalBudget = budgetPacing.reduce((s, b) => s + b.budget, 0);
-    const totalSpent = budgetPacing.reduce((s, b) => s + b.spent, 0);
+    // totalSpent = ALL categorised non-split-parent transactions (not just budgeted categories)
+    const totalSpent = Object.values(spentMap).reduce((s, v) => s + v, 0);
 
     // ── Monthly totals for last 6 months (for sparkline) ────────────────
     const monthlyTotals = await db
