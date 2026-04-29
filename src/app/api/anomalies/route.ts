@@ -36,7 +36,6 @@ export async function GET() {
     const windowStart = windowMonths[windowMonths.length - 1]; // oldest month
 
     // Fetch categorised non-split-parent totals for window + current month
-    const allMonths = [currentMonth, ...windowMonths];
     const spendRows = await db
       .select({
         month: transactions.month,

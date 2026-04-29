@@ -90,7 +90,7 @@ export function AIChatWidget() {
           {/* Header */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
             <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-xs font-medium flex-1">AI Assistant · gemma4:e4b</span>
+            <span className="text-xs font-medium flex-1">Pacey</span>
             <button onClick={() => setMinimised(m => !m)} className="text-muted-foreground hover:text-foreground">
               <Minus className="h-3.5 w-3.5" />
             </button>

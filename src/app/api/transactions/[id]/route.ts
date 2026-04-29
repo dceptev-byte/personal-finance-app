@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { transactions, categoryMappings } from "@/db/schema";
-import { eq, sql, and } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { extractKeyword, isKeywordUseful } from "@/lib/keywords";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -45,6 +45,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     // Auto-approve parent when all its children are now verified
+    let parentVerified = false;
     if (body.isVerified && updated.parentId) {
       const siblings = await db.select({ isVerified: transactions.isVerified })
         .from(transactions)
@@ -54,10 +55,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         await db.update(transactions)
           .set({ isVerified: true, updatedAt: new Date().toISOString() })
           .where(eq(transactions.id, updated.parentId));
+        parentVerified = true;
       }
     }
 
-    return NextResponse.json(updated);
+    return NextResponse.json({ ...updated, _parentVerified: parentVerified, _parentId: updated.parentId });
   } catch (err) {
     console.error("[transactions PATCH]", err);
     return NextResponse.json({ error: "Failed to update transaction" }, { status: 500 });

@@ -69,7 +69,7 @@ export function SidebarNav() {
       {/* Logo */}
       <div className="flex h-14 items-center px-5 border-b border-border">
         <span className="text-sm font-semibold tracking-tight text-foreground">
-          Finance
+          Fast Pace
         </span>
       </div>
 

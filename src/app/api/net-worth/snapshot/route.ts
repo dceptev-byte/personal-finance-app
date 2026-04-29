@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { assets, netWorthSnapshots, amortisationSchedule, loans } from "@/db/schema";
+import { assets, netWorthSnapshots, amortisationSchedule, loans, investments } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { format } from "date-fns";
 
@@ -10,7 +10,9 @@ export async function POST() {
     const currentMonth = format(new Date(), "yyyy-MM");
 
     const allAssets = await db.select().from(assets);
-    const totalAssets = allAssets.reduce((s, a) => s + a.currentValue, 0);
+    const allInvestments = await db.select({ currentValue: investments.currentValue }).from(investments);
+    const sipTotal = allInvestments.reduce((s, i) => s + (i.currentValue ?? 0), 0);
+    const totalAssets = allAssets.reduce((s, a) => s + a.currentValue, 0) + sipTotal;
 
     const allLoans = await db.select().from(loans);
     let totalLiabilities = 0;

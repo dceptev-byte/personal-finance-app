@@ -71,17 +71,36 @@ export async function POST(req: NextRequest) {
 }
 
 // PATCH /api/transactions?action=verify-all&month=2026-04
-// Verifies all transactions in a month that have a category assigned
+// Verifies all categorised transactions, then auto-verifies split parents
 export async function PATCH(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const month = searchParams.get("month") ?? format(new Date(), "yyyy-MM");
+
+    // Verify all categorised non-parent transactions
     await db.update(transactions)
       .set({ isVerified: true, updatedAt: new Date().toISOString() })
       .where(and(
         eq(transactions.month, month),
         isNotNull(transactions.categoryId),
       ));
+
+    // Also verify split parents whose children are all now verified
+    const splitParents = await db.select({ id: transactions.id })
+      .from(transactions)
+      .where(and(eq(transactions.month, month), eq(transactions.isSplit, true)));
+
+    for (const parent of splitParents) {
+      const children = await db.select({ isVerified: transactions.isVerified })
+        .from(transactions)
+        .where(eq(transactions.parentId, parent.id));
+      if (children.length > 0 && children.every(c => c.isVerified)) {
+        await db.update(transactions)
+          .set({ isVerified: true, updatedAt: new Date().toISOString() })
+          .where(eq(transactions.id, parent.id));
+      }
+    }
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[transactions PATCH bulk]", err);

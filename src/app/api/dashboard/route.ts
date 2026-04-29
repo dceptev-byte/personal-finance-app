@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { transactions, budgets, categories, investments, subscriptions, ltgsTracker } from "@/db/schema";
+import { transactions, budgets, categories, investments, subscriptions, ltgsTracker, loans, amortisationSchedule, savings, annualExpenses } from "@/db/schema";
 import { eq, and, sum, gte, ne, isNotNull } from "drizzle-orm";
 import { format } from "date-fns";
 import { getFY, getFYProgress, getFYMonths } from "@/lib/fy";
@@ -10,18 +10,41 @@ export async function GET() {
     const now = new Date();
     const currentMonth = format(now, "yyyy-MM");
 
+    // ── Auto-amount maps (mirrors budget API logic) ──────────────────────
+    // Loan amortisation schedule
+    const allLoans = await db.select().from(loans);
+    const loanAmountMap = new Map<number, number>();
+    for (const loan of allLoans) {
+      const [row] = await db.select().from(amortisationSchedule)
+        .where(and(eq(amortisationSchedule.loanId, loan.id), eq(amortisationSchedule.month, currentMonth)));
+      if (row) {
+        if (loan.principalCategoryId) loanAmountMap.set(loan.principalCategoryId, row.principal);
+        if (loan.interestCategoryId)  loanAmountMap.set(loan.interestCategoryId,  row.interest);
+      }
+    }
+
+    // Active SIPs + savings monthly amounts (for budget auto-population)
+    const budgetSIPs = await db.select({ categoryId: investments.categoryId, monthlyAmount: investments.monthlyAmount })
+      .from(investments).where(eq(investments.isFrozen, false));
+    const budgetSavings = await db.select({ categoryId: savings.categoryId, monthlyAmount: savings.monthlyAmount })
+      .from(savings).where(eq(savings.isActive, true));
+    const sipAmountMap = new Map<number, number>();
+    for (const row of [...budgetSIPs, ...budgetSavings]) {
+      if (!row.categoryId) continue;
+      sipAmountMap.set(row.categoryId, (sipAmountMap.get(row.categoryId) ?? 0) + row.monthlyAmount);
+    }
+
+    // Annual expenses due this month
+    const dueThisMonth = await db.select().from(annualExpenses).where(eq(annualExpenses.dueMonth, currentMonth));
+    const annualAmountMap = new Map<number, number>();
+    for (const ae of dueThisMonth) {
+      if (ae.categoryId) annualAmountMap.set(ae.categoryId, (annualAmountMap.get(ae.categoryId) ?? 0) + ae.budgetedAmount);
+    }
+
     // ── Budget vs actual for current month ──────────────────────────────
-    const budgetData = await db
-      .select({
-        categoryId: budgets.categoryId,
-        categoryName: categories.name,
-        categoryColor: categories.color,
-        categoryTier: categories.tier,
-        budgetAmount: budgets.amount,
-      })
-      .from(budgets)
-      .innerJoin(categories, eq(budgets.categoryId, categories.id))
-      .where(eq(budgets.month, currentMonth));
+    const allCategories = await db.select().from(categories);
+    const monthBudgets = await db.select().from(budgets).where(eq(budgets.month, currentMonth));
+    const budgetMap = new Map(monthBudgets.map(b => [b.categoryId, b.amount]));
 
     const spendData = await db
       .select({
@@ -41,32 +64,42 @@ export async function GET() {
       if (row.categoryId) spentMap[row.categoryId] = Number(row.spent ?? 0);
     }
 
-    const budgetPacing = budgetData
-      .filter((b) => b.budgetAmount > 0)
-      .map((b) => ({
-        categoryId: b.categoryId,
-        category: b.categoryName,
-        color: b.categoryColor,
-        tier: b.categoryTier,
-        budget: b.budgetAmount,
-        spent: spentMap[b.categoryId] ?? 0,
-        pct: Math.min(
-          100,
-          Math.round(((spentMap[b.categoryId] ?? 0) / b.budgetAmount) * 100)
-        ),
+    // Resolve budget amount for each category using same priority as budget API
+    const budgetPacing = allCategories
+      .filter(cat => cat.tier !== "income" && !cat.excludeFromBudget)
+      .map(cat => {
+        const fromSchedule = loanAmountMap.get(cat.id);
+        const fromSIPs     = sipAmountMap.get(cat.id);
+        const fromAnnual   = annualAmountMap.get(cat.id);
+        const budgetAmount = fromSchedule !== undefined ? fromSchedule
+          : fromSIPs   !== undefined ? fromSIPs
+          : fromAnnual !== undefined ? fromAnnual
+          : (budgetMap.get(cat.id) ?? 0);
+        return { categoryId: cat.id, category: cat.name, color: cat.color, tier: cat.tier, budget: budgetAmount, spent: spentMap[cat.id] ?? 0 };
+      })
+      .filter(b => b.budget > 0)
+      .map(b => ({
+        ...b,
+        pct: Math.round((b.spent / b.budget) * 100),
       }))
       .sort((a, b) => b.pct - a.pct);
 
     const totalBudget = budgetPacing.reduce((s, b) => s + b.budget, 0);
-    const totalSpent = Object.values(spentMap).reduce((s, v) => s + v, 0);
+
+    // Exclude income-tier categories from "spent this month" — income is money in, not out
+    const incomeCategoryIds = new Set(allCategories.filter(c => c.tier === "income").map(c => c.id));
+    const totalSpent = Object.entries(spentMap)
+      .filter(([id]) => !incomeCategoryIds.has(Number(id)))
+      .reduce((s, [, v]) => s + v, 0);
 
     // ── Savings rate ────────────────────────────────────────────────────
     // income tier actual vs investment tier actual → savings rate = invest / income
-    const incomeItems   = budgetPacing.filter(b => b.tier === "income");
-    const investItems   = budgetPacing.filter(b => b.tier === "investment");
-    const incomeActual  = incomeItems.reduce((s, b) => s + b.spent, 0);
-    const investActual  = investItems.reduce((s, b) => s + b.spent, 0);
-    const savingsRate   = incomeActual > 0 ? Math.round((investActual / incomeActual) * 100) : null;
+    const investItems  = budgetPacing.filter(b => b.tier === "investment");
+    const incomeActual = allCategories
+      .filter(c => c.tier === "income")
+      .reduce((s, c) => s + (spentMap[c.id] ?? 0), 0);
+    const investActual = investItems.reduce((s, b) => s + b.spent, 0);
+    const savingsRate  = incomeActual > 0 ? Math.round((investActual / incomeActual) * 100) : null;
 
     // ── Monthly totals for last 6 months ────────────────────────────────
     const monthlyTotals = await db

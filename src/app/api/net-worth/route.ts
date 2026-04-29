@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { assets, netWorthSnapshots, amortisationSchedule, loans } from "@/db/schema";
+import { assets, netWorthSnapshots, amortisationSchedule, loans, investments } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { format } from "date-fns";
 
@@ -22,7 +22,18 @@ export async function GET() {
       if (schedule?.balance) totalLiabilities += schedule.balance;
     }
 
-    const totalAssets = allAssets.reduce((s, a) => s + a.currentValue, 0);
+    // Auto-sync: SIP portfolio value from investments.currentValue
+    const allInvestments = await db.select({
+      fundName: investments.fundName,
+      currentValue: investments.currentValue,
+      isFrozen: investments.isFrozen,
+    }).from(investments);
+    const sipFunds = allInvestments
+      .filter(i => (i.currentValue ?? 0) > 0)
+      .map(i => ({ name: i.fundName, value: i.currentValue ?? 0, frozen: i.isFrozen }));
+    const sipPortfolioTotal = sipFunds.reduce((s, f) => s + f.value, 0);
+
+    const totalAssets = allAssets.reduce((s, a) => s + a.currentValue, 0) + sipPortfolioTotal;
     const netWorth = totalAssets - totalLiabilities;
 
     return NextResponse.json({
@@ -32,6 +43,7 @@ export async function GET() {
       netWorth,
       snapshots: snapshots.reverse(),
       currentMonth,
+      sipPortfolio: { total: sipPortfolioTotal, funds: sipFunds },
     });
   } catch (err) {
     console.error("[net-worth GET]", err);

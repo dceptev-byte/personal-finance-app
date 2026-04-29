@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Finance",
+  title: "Fast Pace",
   description: "Personal finance — local, private, AI-powered",
 };
 

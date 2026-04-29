@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { transactions, imports, categories, categoryMappings, loans, amortisationSchedule, splitRules, splitRuleItems } from "@/db/schema";
+import { transactions, imports, categoryMappings, loans, amortisationSchedule, splitRules, splitRuleItems } from "@/db/schema";
 import { ollamaChat } from "@/lib/ollama";
 import { extractKeyword } from "@/lib/keywords";
 import { format } from "date-fns";
@@ -182,6 +182,7 @@ ${lines}`;
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function categoriseRows(
   rows: ParsedRow[],
   categoryList: { id: number; name: string }[]
@@ -233,9 +234,6 @@ export async function POST(req: NextRequest) {
     if (rows.length === 0) {
       return NextResponse.json({ error: "No valid transactions found in file" }, { status: 422 });
     }
-
-    // Get categories
-    const categoryList = await db.select({ id: categories.id, name: categories.name }).from(categories);
 
     // Apply learned mappings only — instant, no AI during import
     // (AI re-categorisation is available on-demand via the Expenses page)

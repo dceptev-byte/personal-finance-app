@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import {
   TrendingUp, TrendingDown, Minus, Sparkles, Send,
-  AlertTriangle, ChevronRight, RefreshCw, Wallet, Lock, BarChart3, ArrowRight, X,
+  AlertTriangle, ChevronRight, RefreshCw, Wallet, Lock, BarChart3, ArrowRight, X, Receipt,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -69,7 +69,7 @@ function fmt(n: number) {
   }).format(n);
 }
 
-const TIER_ORDER = ["income", "fixed", "investment", "discretionary"] as const;
+const TIER_ORDER = ["income", "fixed", "investment", "discretionary", "misc"] as const;
 
 const TIER_META: Record<string, { label: string; icon: React.ReactNode; description: string }> = {
   income: {
@@ -92,7 +92,192 @@ const TIER_META: Record<string, { label: string; icon: React.ReactNode; descript
     icon: <Wallet className="h-3.5 w-3.5" />,
     description: "Food, shopping, lifestyle",
   },
+  misc: {
+    label: "Misc.",
+    icon: <Receipt className="h-3.5 w-3.5" />,
+    description: "Annual & one-off expenses",
+  },
 };
+
+// ─── Spend Overview (dual-ring donut + 6-month bars) ─────────────────────────
+
+function DonutRings({
+  segments, cx, cy, r, strokeWidth,
+}: {
+  segments: { pct: number; color: string }[];
+  cx: number; cy: number; r: number; strokeWidth: number;
+}) {
+  const circ = 2 * Math.PI * r;
+  const cumPcts = segments.map((_, i) => segments.slice(0, i).reduce((s, sg) => s + sg.pct, 0));
+  const arcs = segments.map((seg, i) => ({
+    dash: seg.pct * circ,
+    gap: (1 - seg.pct) * circ,
+    rot: cumPcts[i] * 360 - 90,
+    color: seg.color,
+  }));
+  return (
+    <>
+      {arcs.map((arc, i) => (
+        <circle
+          key={i}
+          cx={cx} cy={cy} r={r}
+          fill="none"
+          stroke={arc.color}
+          strokeWidth={strokeWidth}
+          strokeDasharray={`${arc.dash.toFixed(2)} ${arc.gap.toFixed(2)}`}
+          transform={`rotate(${arc.rot}, ${cx}, ${cy})`}
+        />
+      ))}
+    </>
+  );
+}
+
+function SpendOverview({
+  fixedBudget, fixedSpent,
+  investBudget, investSpent,
+  discBudget, discSpent,
+  miscBudget, miscSpent,
+  monthlyTotals,
+  totalBudget,
+}: {
+  fixedBudget: number; fixedSpent: number;
+  investBudget: number; investSpent: number;
+  discBudget: number; discSpent: number;
+  miscBudget: number; miscSpent: number;
+  monthlyTotals: { month: string; total: number }[];
+  totalBudget: number;
+}) {
+  const budgetTotal = fixedBudget + investBudget + discBudget + miscBudget;
+  const spentTotal  = fixedSpent  + investSpent  + discSpent  + miscSpent;
+
+  const outerSegs = budgetTotal > 0 ? [
+    { pct: fixedBudget  / budgetTotal, color: "#4ade8055" },
+    { pct: investBudget / budgetTotal, color: "#818cf855" },
+    { pct: discBudget   / budgetTotal, color: "#e4b73a55" },
+    { pct: miscBudget   / budgetTotal, color: "#94a3b855" },
+  ] : [];
+
+  const innerSegs = spentTotal > 0 ? [
+    { pct: fixedSpent  / spentTotal, color: "#4ade80" },
+    { pct: investSpent / spentTotal, color: "#818cf8" },
+    { pct: discSpent   / spentTotal, color: "#e4b73a" },
+    { pct: miscSpent   / spentTotal, color: "#94a3b8" },
+  ] : [];
+
+  // Last 6 months for bar chart (pad with nulls if fewer months)
+  const last6 = Array.from({ length: 6 }, (_, i) => monthlyTotals[monthlyTotals.length - 6 + i] ?? null);
+  const maxVal = Math.max(totalBudget * 1.2, ...last6.map(m => m?.total ?? 0));
+  const BAR_H = 80;
+
+  function fmtShort(n: number) {
+    return n >= 100000 ? `₹${(n / 100000).toFixed(1)}L` : `₹${Math.round(n / 1000)}K`;
+  }
+
+  const tiers = [
+    { label: "Fixed",       color: "#4ade80", spent: fixedSpent,  budget: fixedBudget  },
+    { label: "Investments", color: "#818cf8", spent: investSpent, budget: investBudget },
+    { label: "Guilt-free",  color: "#e4b73a", spent: discSpent,   budget: discBudget   },
+    { label: "Misc.",       color: "#94a3b8", spent: miscSpent,   budget: miscBudget   },
+  ];
+
+  return (
+    <Card>
+      <CardContent className="pt-5 pb-4">
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Spend Overview</p>
+          <p className="text-xs text-muted-foreground tabular-nums">{fmtShort(spentTotal)} of {fmtShort(budgetTotal)}</p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-6 items-center">
+
+          {/* Left: dual-ring donut */}
+          <div className="flex items-center gap-4">
+            <svg width="110" height="110" viewBox="0 0 110 110" className="shrink-0">
+              <DonutRings segments={outerSegs} cx={55} cy={55} r={44} strokeWidth={12} />
+              <DonutRings segments={innerSegs} cx={55} cy={55} r={29} strokeWidth={12} />
+              <text x="55" y="51" textAnchor="middle" fill="#e4e4e7" fontSize="12" fontWeight="700" fontFamily="inherit">
+                {fmtShort(spentTotal)}
+              </text>
+              <text x="55" y="63" textAnchor="middle" fill="#71717a" fontSize="9" fontFamily="inherit">
+                spent
+              </text>
+            </svg>
+
+            <div className="space-y-2.5 flex-1">
+              <p className="text-[10px] text-muted-foreground/60">outer = budget · inner = actual</p>
+              {tiers.map(t => {
+                const delta = t.budget > 0 ? Math.round((t.spent / t.budget - 1) * 100) : 0;
+                const under = delta < 0;
+                return (
+                  <div key={t.label} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <div className="h-2 w-2 rounded-full shrink-0" style={{ background: t.color }} />
+                      <span className="text-xs">{t.label}</span>
+                    </div>
+                    <div className="flex items-center gap-2 tabular-nums">
+                      <span className="text-xs text-muted-foreground">
+                        {fmtShort(t.spent)}<span className="text-muted-foreground/40"> / {fmtShort(t.budget)}</span>
+                      </span>
+                      <span className={cn("text-[11px] font-medium w-8 text-right", under ? "text-muted-foreground/50" : "text-destructive")}>
+                        {under ? `↓${Math.abs(delta)}%` : `↑${delta}%`}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Right: 6-month bar chart */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] text-muted-foreground/60">6-month spend</p>
+              <p className="text-[10px] text-muted-foreground/40">- - - budget {fmtShort(totalBudget)}</p>
+            </div>
+            <div className="relative">
+              {/* Budget threshold line */}
+              {totalBudget > 0 && (
+                <div
+                  className="absolute left-0 right-0 border-t border-dashed border-border/60 pointer-events-none"
+                  style={{ bottom: `${Math.round((totalBudget / maxVal) * BAR_H) + 16}px` }}
+                />
+              )}
+              <div className="flex items-end gap-1.5" style={{ height: `${BAR_H + 16}px` }}>
+                {last6.map((m, i) => {
+                  if (!m) return (
+                    <div key={i} className="flex flex-col items-center gap-1 flex-1">
+                      <div className="w-full rounded-sm" style={{ height: 4, background: "#27272a" }} />
+                      <span className="text-[9px] text-muted-foreground/30">—</span>
+                    </div>
+                  );
+                  const h = Math.max(4, Math.round((m.total / maxVal) * BAR_H));
+                  const over = m.total > totalBudget;
+                  const isCurrent = i === 5;
+                  const label = format(new Date(m.month + "-01"), "MMM");
+                  return (
+                    <div key={i} className="flex flex-col items-center gap-1 flex-1">
+                      <div
+                        className="w-full rounded-sm transition-all"
+                        style={{
+                          height: h,
+                          background: over ? "#ef4444" : isCurrent ? "#e4b73a" : "#e4b73a55",
+                        }}
+                      />
+                      <span className={cn("text-[9px]", isCurrent ? "text-foreground/80" : "text-muted-foreground/50")}>
+                        {label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function PacingBar({ pct, monthProgress }: { pct: number; monthProgress: number }) {
   const over = pct > 100;
@@ -179,6 +364,8 @@ function TierSection({
   items: BudgetPacing[];
   monthProgress: number;
 }) {
+  const [open, setOpen] = useState(false);
+
   if (items.length === 0) return null;
 
   const meta = TIER_META[tier] ?? { label: tier, icon: null, description: "" };
@@ -190,16 +377,26 @@ function TierSection({
 
   return (
     <div>
-      {/* Tier header */}
-      <div className="flex items-center justify-between mb-2">
+      {/* Tier header — click to expand/collapse */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between mb-2 group cursor-pointer"
+      >
         <div className="flex items-center gap-2">
           <span className={cn(
-            "text-muted-foreground",
+            "text-muted-foreground transition-transform duration-200",
+            open ? "rotate-90" : "",
             isOver ? "text-destructive" : isWarning ? "text-amber-600 dark:text-amber-400" : ""
+          )}>
+            <ChevronRight className="h-3.5 w-3.5" />
+          </span>
+          <span className={cn(
+            "flex items-center gap-1.5",
+            isOver ? "text-destructive" : isWarning ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
           )}>
             {meta.icon}
           </span>
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground group-hover:text-foreground transition-colors">
             {meta.label}
           </span>
         </div>
@@ -214,9 +411,10 @@ function TierSection({
             {overallPct}%
           </span>
         </div>
-      </div>
+      </button>
 
-      {/* Category rows */}
+      {/* Category rows — only shown when open */}
+      {open && (
       <div className="rounded-xl border border-border overflow-hidden">
         {items.map((item, i) => (
           <div
@@ -246,6 +444,7 @@ function TierSection({
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
@@ -354,7 +553,6 @@ export function DashboardClient() {
 
   // Derive summary figures from tier groups
   const incomeBudget = byTier.income.reduce((s, i) => s + i.budget, 0);
-  const incomeSpent  = byTier.income.reduce((s, i) => s + i.spent, 0);
 
   const fixedTotal    = byTier.fixed.reduce((s, i) => s + i.budget, 0);
   const fixedSpent    = byTier.fixed.reduce((s, i) => s + i.spent, 0);
@@ -364,6 +562,9 @@ export function DashboardClient() {
 
   const discTotal     = byTier.discretionary.reduce((s, i) => s + i.budget, 0);
   const discSpent     = byTier.discretionary.reduce((s, i) => s + i.spent, 0);
+
+  const miscTotal     = (byTier.misc ?? []).reduce((s, i) => s + i.budget, 0);
+  const miscSpent     = (byTier.misc ?? []).reduce((s, i) => s + i.spent, 0);
 
   const committedBudget = fixedTotal + investTotal;
   const committedSpent  = fixedSpent + investSpent;
@@ -506,6 +707,16 @@ export function DashboardClient() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Spend Overview ── */}
+      <SpendOverview
+        fixedBudget={fixedTotal}   fixedSpent={fixedSpent}
+        investBudget={investTotal} investSpent={investSpent}
+        discBudget={discTotal}     discSpent={discSpent}
+        miscBudget={miscTotal}     miscSpent={miscSpent}
+        monthlyTotals={data.monthlyTotals}
+        totalBudget={data.totalBudget}
+      />
 
       {/* ── Anomaly alerts ── */}
       <AnomalyStrip />

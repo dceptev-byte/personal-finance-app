@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { vault } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { encrypt, decrypt } from "@/lib/crypto";
+import { encrypt } from "@/lib/crypto";
 
 interface VaultField { key: string; value: string }
 interface VaultPayload { fields: VaultField[]; notes?: string }

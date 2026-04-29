@@ -24,6 +24,9 @@ interface BudgetRow {
   color: string;
   budgetId: number | null;
   amount: number;
+  autoFromSchedule?: boolean;
+  autoFromSIPs?: boolean;
+  autoFromAnnual?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -46,9 +49,10 @@ const TIER_LABELS: Record<string, string> = {
   fixed: "Fixed Commitments",
   investment: "Investments & Savings",
   discretionary: "Discretionary",
+  misc: "Misc.",
 };
 
-const TIER_ORDER = ["income", "fixed", "investment", "discretionary"];
+const TIER_ORDER = ["fixed", "investment", "discretionary", "misc"];
 
 // ── Budget Editor ─────────────────────────────────────────────────────────
 
@@ -169,13 +173,27 @@ function BudgetEditor() {
                       i < tierRows.length - 1 && "border-b border-border"
                     )}>
                       <span className="flex-1 text-sm">{row.categoryName}</span>
+                      {(row.autoFromSchedule || row.autoFromSIPs || row.autoFromAnnual) && edited[row.categoryId] === undefined && (
+                        <span className="text-xs text-muted-foreground italic">
+                          {row.autoFromSchedule ? "schedule" : row.autoFromSIPs ? "SIPs" : "annual"}
+                        </span>
+                      )}
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">₹</div>
                       <input
                         type="number"
                         value={val || ""}
                         placeholder="0"
-                        onChange={e => setEdited(prev => ({ ...prev, [row.categoryId]: Number(e.target.value) }))}
-                        className="w-28 rounded border border-border bg-background px-2 py-1 text-right text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                        readOnly={(row.autoFromSchedule || row.autoFromSIPs || row.autoFromAnnual) && edited[row.categoryId] === undefined}
+                        onChange={e => {
+                          if (row.autoFromSchedule) return;
+                          setEdited(prev => ({ ...prev, [row.categoryId]: Number(e.target.value) }));
+                        }}
+                        className={cn(
+                          "w-28 rounded border border-border px-2 py-1 text-right text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-ring",
+                          (row.autoFromSchedule || row.autoFromSIPs || row.autoFromAnnual) && edited[row.categoryId] === undefined
+                            ? "bg-muted text-muted-foreground cursor-default"
+                            : "bg-background"
+                        )}
                       />
                     </div>
                   );

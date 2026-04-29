@@ -1,12 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Lock, Eye, EyeOff, Plus, Trash2, ChevronRight, AlertTriangle } from "lucide-react";
+import { Lock, Eye, EyeOff, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 
 interface VaultMeta { id: number; title: string; category: string; reminderDate: string | null; reminderNote: string | null; updatedAt: string | null }
@@ -148,6 +146,7 @@ export default function VaultPage() {
     const res = await fetch("/api/vault");
     setEntries(await res.json() as VaultMeta[]);
   }
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, []);
 
   async function del(id: number) {

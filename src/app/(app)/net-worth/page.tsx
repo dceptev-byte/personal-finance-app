@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Plus, Pencil, Check, X, Camera, Trash2 } from "lucide-react";
+import { Plus, Pencil, Check, X, Camera, Trash2, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -34,6 +33,7 @@ interface NetWorthData {
   netWorth: number;
   snapshots: NetWorthSnapshot[];
   currentMonth: string;
+  sipPortfolio: { total: number; funds: { name: string; value: number; frozen: boolean }[] };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -51,13 +51,6 @@ const ASSET_TYPES = [
   { value: "epf",        label: "EPF / PF",          color: "bg-purple-500" },
   { value: "other",      label: "Other",             color: "bg-muted-foreground" },
 ];
-
-function typeLabel(t: string) {
-  return ASSET_TYPES.find(a => a.value === t)?.label ?? t;
-}
-function typeColor(t: string) {
-  return ASSET_TYPES.find(a => a.value === t)?.color ?? "bg-muted-foreground";
-}
 
 // ─── Inline editable value ────────────────────────────────────────────────────
 
@@ -295,8 +288,11 @@ export default function NetWorthPage() {
         <CardContent className="pt-0 space-y-4">
           {ASSET_TYPES.map(t => {
             const items = byType[t.value];
-            if (items.length === 0) return null;
-            const total = items.reduce((s, a) => s + a.currentValue, 0);
+            const isSipSection = t.value === "investment";
+            const hasSip = isSipSection && data.sipPortfolio.total > 0;
+            if (items.length === 0 && !hasSip) return null;
+            const manualTotal = items.reduce((s, a) => s + a.currentValue, 0);
+            const total = manualTotal + (isSipSection ? data.sipPortfolio.total : 0);
             return (
               <div key={t.value}>
                 <div className="flex items-center justify-between mb-2">
@@ -307,6 +303,19 @@ export default function NetWorthPage() {
                   <span className="text-xs text-muted-foreground tabular-nums">{fmt(total)}</span>
                 </div>
                 <div className="rounded-xl border border-border overflow-hidden">
+                  {/* Auto-synced SIP portfolio rows */}
+                  {hasSip && data.sipPortfolio.funds.map((fund, i) => (
+                    <div key={fund.name} className={cn(
+                      "flex items-center gap-3 px-3 py-2.5 bg-muted/30",
+                      (i < data.sipPortfolio.funds.length - 1 || items.length > 0) && "border-b border-border"
+                    )}>
+                      <RefreshCw className="h-3 w-3 text-muted-foreground/50 shrink-0" />
+                      <span className="flex-1 text-sm text-muted-foreground">{fund.name}</span>
+                      <span className="text-sm tabular-nums text-muted-foreground">{fmt(fund.value)}</span>
+                      <div className="w-[18px]" />
+                    </div>
+                  ))}
+                  {/* Manual asset rows */}
                   {items.map((asset, i) => (
                     <div key={asset.id} className={cn(
                       "flex items-center gap-3 px-3 py-2.5",

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { format, subMonths } from "date-fns";
-import { Upload, Plus, Trash2, Check, RefreshCw, ChevronDown, ChevronRight } from "lucide-react";
+import { Upload, Plus, Trash2, Check, RefreshCw, ChevronDown, ChevronRight, Pencil, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -221,40 +221,79 @@ function ImportPanel({ onImported }: { onImported: (latestMonth: string, months:
 
 function TxRow({
   tx, categories, onUpdate, onDelete, indent = false,
+  autoFocusEdit = false, onSaved,
 }: {
   tx: Transaction;
   categories: Category[];
   onUpdate: (id: number, patch: Partial<Transaction>) => void;
   onDelete: (id: number) => void;
   indent?: boolean;
+  autoFocusEdit?: boolean;
+  onSaved?: () => void;
 }) {
+  const rowRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState(false);
   const [catId, setCatId] = useState<string>(tx.categoryId?.toString() ?? "");
   const [saving, setSaving] = useState(false);
+  const [editAmt, setEditAmt] = useState(false);
+  const [draftAmt, setDraftAmt] = useState(tx.amount.toString());
 
-  async function saveCategory() {
+  // Auto-open dropdown when parent advances focus to this row
+  useEffect(() => {
+    if (autoFocusEdit && !tx.isVerified && !indent) {
+      setEditing(true);
+      rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFocusEdit]);
+
+  // Save category with an immediate value (avoids stale state from onChange)
+  async function saveCategory(overrideId?: string) {
+    const id = overrideId ?? catId;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/transactions/${tx.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoryId: id ? Number(id) : null, isVerified: true }),
+      });
+      const data = await res.json() as { _parentVerified?: boolean; _parentId?: number | null };
+      const cat = categories.find((c) => c.id === Number(id));
+      onUpdate(tx.id, { categoryId: id ? Number(id) : null, categoryName: cat?.name ?? null, categoryColor: cat?.color ?? null, isVerified: true });
+      if (data._parentVerified && data._parentId) onUpdate(data._parentId, { isVerified: true });
+      setEditing(false);
+      onSaved?.();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveAmount() {
+    const amount = parseFloat(draftAmt);
+    if (isNaN(amount) || amount <= 0) return;
     setSaving(true);
     try {
       await fetch(`/api/transactions/${tx.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId: catId ? Number(catId) : null, isVerified: true }),
+        body: JSON.stringify({ amount }),
       });
-      const cat = categories.find((c) => c.id === Number(catId));
-      onUpdate(tx.id, { categoryId: catId ? Number(catId) : null, categoryName: cat?.name ?? null, categoryColor: cat?.color ?? null, isVerified: true });
-      setEditing(false);
+      onUpdate(tx.id, { amount });
+      setEditAmt(false);
     } finally {
       setSaving(false);
     }
   }
 
   async function verify() {
-    await fetch(`/api/transactions/${tx.id}`, {
+    const res = await fetch(`/api/transactions/${tx.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isVerified: true }),
     });
+    const data = await res.json() as { _parentVerified?: boolean; _parentId?: number | null };
     onUpdate(tx.id, { isVerified: true });
+    if (data._parentVerified && data._parentId) onUpdate(data._parentId, { isVerified: true });
   }
 
   async function del() {
@@ -263,7 +302,7 @@ function TxRow({
   }
 
   return (
-    <div className={cn(
+    <div ref={rowRef} className={cn(
       "flex items-center gap-3 py-2.5 border-b border-border last:border-0 hover:bg-muted/30 transition-colors group",
       indent ? "pl-10 pr-4 bg-muted/10" : "px-4",
       !tx.isVerified && !indent && "bg-amber-50/30 dark:bg-amber-950/10"
@@ -278,22 +317,25 @@ function TxRow({
         {indent ? (tx.splitLabel ?? tx.description) : tx.description}
       </span>
 
-      {/* Category */}
-      <div className="w-36 shrink-0">
+      {/* Category — single click: selecting auto-saves + verifies */}
+      <div className="w-40 shrink-0">
         {editing ? (
-          <div className="flex gap-1">
+          <div className="flex gap-1 items-center">
             <select
               autoFocus
               value={catId}
-              onChange={(e) => setCatId(e.target.value)}
+              onChange={(e) => { setCatId(e.target.value); saveCategory(e.target.value); }}
+              onKeyDown={(e) => { if (e.key === "Escape") setEditing(false); }}
+              disabled={saving}
               className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
             >
               <option value="">Uncategorised</option>
               {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <button onClick={saveCategory} disabled={saving} className="rounded border border-border px-1.5 hover:bg-muted">
-              {saving ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-            </button>
+            {saving
+              ? <RefreshCw className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
+              : <button onClick={() => setEditing(false)} className="rounded p-0.5 hover:bg-muted text-muted-foreground shrink-0"><X className="h-3 w-3" /></button>
+            }
           </div>
         ) : (
           <button
@@ -312,12 +354,36 @@ function TxRow({
       </div>
 
       {/* Amount */}
-      <span className={cn("w-24 shrink-0 text-right tabular-nums", indent ? "text-xs text-muted-foreground" : "text-sm font-medium")}>
-        {fmt(tx.amount)}
-      </span>
+      <div className={cn("w-24 shrink-0 text-right tabular-nums", indent ? "text-xs text-muted-foreground" : "text-sm font-medium")}>
+        {editAmt ? (
+          <div className="flex items-center gap-1">
+            <input
+              autoFocus
+              type="number"
+              value={draftAmt}
+              onChange={(e) => setDraftAmt(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") saveAmount(); if (e.key === "Escape") { setEditAmt(false); setDraftAmt(tx.amount.toString()); } }}
+              className="w-full rounded border border-border bg-background px-1.5 py-0.5 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <button onClick={saveAmount} disabled={saving} className="rounded p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-600">
+              {saving ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+            </button>
+            <button onClick={() => { setEditAmt(false); setDraftAmt(tx.amount.toString()); }} className="rounded p-0.5 hover:bg-muted text-muted-foreground">
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ) : (
+          fmt(tx.amount)
+        )}
+      </div>
 
       {/* Actions — verify always visible on child rows, hover-only on parents */}
       <div className={cn("flex items-center gap-1 transition-opacity", indent ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
+        {!editAmt && (
+          <button onClick={() => { setDraftAmt(tx.amount.toString()); setEditAmt(true); }} className="rounded p-1 hover:bg-muted text-muted-foreground" title="Edit amount">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        )}
         {!tx.isVerified && (
           <button onClick={verify} className="rounded p-1 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-600" title="Verify">
             <Check className="h-3.5 w-3.5" />
@@ -339,10 +405,10 @@ function TxRow({
 // ── Split Parent Row (with expand toggle) ─────────────────────────────────
 
 function SplitParentRow({
-  tx, children, categories, onUpdate, onDelete,
+  tx, splitChildren, categories, onUpdate, onDelete,
 }: {
   tx: Transaction;
-  children: Transaction[];
+  splitChildren: Transaction[];
   categories: Category[];
   onUpdate: (id: number, patch: Partial<Transaction>) => void;
   onDelete: (id: number) => void;
@@ -380,7 +446,7 @@ function SplitParentRow({
         {/* Split badge */}
         <div className="w-36 shrink-0">
           <span className="text-xs text-muted-foreground italic">
-            {children.length} splits
+            {splitChildren.length} splits
           </span>
         </div>
 
@@ -395,7 +461,7 @@ function SplitParentRow({
             onClick={async () => {
               await fetch(`/api/transactions/${tx.id}`, { method: "DELETE" });
               onDelete(tx.id);
-              for (const c of children) onDelete(c.id);
+              for (const c of splitChildren) onDelete(c.id);
             }}
             className="rounded p-1 hover:bg-red-100 dark:hover:bg-red-900 text-muted-foreground hover:text-destructive"
             title="Delete"
@@ -411,7 +477,7 @@ function SplitParentRow({
       </div>
 
       {/* Children */}
-      {expanded && children.map(child => (
+      {expanded && splitChildren.map(child => (
         <TxRow
           key={child.id}
           tx={child}
@@ -434,6 +500,9 @@ export function ExpensesClient() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [clearConfirm, setClearConfirm] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [activeId, setActiveId] = useState<number | null>(null);
 
   async function loadTxs(m: string) {
     setLoading(true);
@@ -449,7 +518,21 @@ export function ExpensesClient() {
     loadTxs(latestMonth);
   }
 
-  useEffect(() => { loadTxs(month); }, [month]);
+  async function clearMonth() {
+    setClearing(true);
+    try {
+      await fetch(`/api/transactions/clear?month=${month}`, { method: "DELETE" });
+      setTxs([]);
+      setClearConfirm(false);
+      toast.success(`Cleared all transactions for ${month}`);
+    } catch {
+      toast.error("Failed to clear");
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  useEffect(() => { loadTxs(month); setActiveId(null); }, [month]);
   useEffect(() => {
     fetch("/api/categories").then((r) => r.json()).then((d: Category[]) => {
       setCategories(d);
@@ -480,6 +563,12 @@ export function ExpensesClient() {
   // Total: sum only top-level rows (children are sub-components of parents)
   const total = topLevel.reduce((s, t) => s + t.amount, 0);
   const unverified = topLevel.filter((t) => !t.isVerified).length;
+  const verified = topLevel.filter((t) => t.isVerified).length;
+
+  const advanceToNext = useCallback((currentId: number) => {
+    const next = topLevel.find(t => !t.isVerified && !t.isSplit && t.id !== currentId);
+    setActiveId(next?.id ?? null);
+  }, [topLevel]);
 
   return (
     <div className="space-y-6">
@@ -493,7 +582,23 @@ export function ExpensesClient() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <MonthPicker value={month} onChange={(m) => { setMonth(m); }} extraMonths={extraMonths} />
+          <MonthPicker value={month} onChange={(m) => { setMonth(m); setClearConfirm(false); }} extraMonths={extraMonths} />
+          {!clearConfirm ? (
+            <Button size="sm" variant="ghost" onClick={() => setClearConfirm(true)}
+              className="text-xs text-muted-foreground hover:text-destructive gap-1.5 h-8">
+              <Trash2 className="h-3.5 w-3.5" />Clear
+            </Button>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-destructive">Clear {month}?</span>
+              <Button size="sm" variant="destructive" onClick={clearMonth} disabled={clearing} className="h-7 text-xs px-2">
+                {clearing ? <RefreshCw className="h-3 w-3 animate-spin" /> : "Yes, clear"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setClearConfirm(false)} className="h-7 text-xs px-2">
+                Cancel
+              </Button>
+            </div>
+          )}
           {unverified > 0 && (
             <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
               {unverified} need verification
@@ -523,10 +628,28 @@ export function ExpensesClient() {
 
       {/* Transaction list */}
       <Card>
-        <CardHeader className="pb-0 pt-4 px-4">
-          <CardTitle className="text-sm font-semibold text-muted-foreground">
-            {format(new Date(month + "-01"), "MMMM yyyy")}
-          </CardTitle>
+        <CardHeader className="pb-2 pt-4 px-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-semibold text-muted-foreground">
+              {format(new Date(month + "-01"), "MMMM yyyy")}
+            </CardTitle>
+            {topLevel.length > 0 && (
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {verified} / {topLevel.length} verified
+              </span>
+            )}
+          </div>
+          {topLevel.length > 0 && (
+            <div className="h-1 w-full rounded-full bg-border overflow-hidden mt-2">
+              <div
+                className={cn(
+                  "h-full rounded-full transition-all duration-500",
+                  verified === topLevel.length ? "bg-emerald-500" : "bg-amber-400"
+                )}
+                style={{ width: `${Math.round((verified / topLevel.length) * 100)}%` }}
+              />
+            </div>
+          )}
         </CardHeader>
         <CardContent className="p-0 pt-2">
           {loading ? (
@@ -554,7 +677,7 @@ export function ExpensesClient() {
                     <SplitParentRow
                       key={tx.id}
                       tx={tx}
-                      children={children}
+                      splitChildren={children}
                       categories={categories}
                       onUpdate={updateTx}
                       onDelete={deleteTx}
@@ -562,7 +685,8 @@ export function ExpensesClient() {
                   );
                 }
                 return (
-                  <TxRow key={tx.id} tx={tx} categories={categories} onUpdate={updateTx} onDelete={deleteTx} />
+                  <TxRow key={tx.id} tx={tx} categories={categories} onUpdate={updateTx} onDelete={deleteTx}
+                    autoFocusEdit={tx.id === activeId} onSaved={() => advanceToNext(tx.id)} />
                 );
               })}
             </div>

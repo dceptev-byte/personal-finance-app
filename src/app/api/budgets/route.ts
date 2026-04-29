@@ -1,28 +1,85 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { budgets, categories } from "@/db/schema";
+import { budgets, categories, loans, amortisationSchedule, investments, savings, annualExpenses } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { format, subMonths } from "date-fns";
+import { format } from "date-fns";
 
 // GET /api/budgets?month=2026-04
-// Returns all categories with their budget amounts for the given month
+// Returns all categories (excl. income) with their budget amounts for the given month.
+// Loan principal/interest categories are auto-populated from the amortisation schedule.
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const month = searchParams.get("month") ?? format(new Date(), "yyyy-MM");
 
+    // Build a map of loan category → scheduled amount for this month
+    const allLoans = await db.select().from(loans);
+    const loanAmountMap = new Map<number, number>(); // categoryId → amount
+
+    for (const loan of allLoans) {
+      const [row] = await db.select()
+        .from(amortisationSchedule)
+        .where(and(
+          eq(amortisationSchedule.loanId, loan.id),
+          eq(amortisationSchedule.month, month),
+        ));
+      if (row) {
+        if (loan.principalCategoryId) loanAmountMap.set(loan.principalCategoryId, row.principal);
+        if (loan.interestCategoryId)  loanAmountMap.set(loan.interestCategoryId,  row.interest);
+      }
+    }
+
+    // Sum active SIP + savings monthly amounts per categoryId
+    const activeInvestments = await db.select({
+      categoryId: investments.categoryId,
+      monthlyAmount: investments.monthlyAmount,
+    }).from(investments).where(eq(investments.isFrozen, false));
+
+    const activeSavings = await db.select({
+      categoryId: savings.categoryId,
+      monthlyAmount: savings.monthlyAmount,
+    }).from(savings).where(eq(savings.isActive, true));
+
+    const sipAmountMap = new Map<number, number>();
+    for (const row of [...activeInvestments, ...activeSavings]) {
+      if (!row.categoryId) continue;
+      sipAmountMap.set(row.categoryId, (sipAmountMap.get(row.categoryId) ?? 0) + row.monthlyAmount);
+    }
+
+    // Annual expenses due this month → auto-populate their category budget
+    const dueThisMonth = await db.select().from(annualExpenses)
+      .where(eq(annualExpenses.dueMonth, month));
+    const annualAmountMap = new Map<number, number>();
+    for (const ae of dueThisMonth) {
+      if (ae.categoryId) annualAmountMap.set(ae.categoryId, (annualAmountMap.get(ae.categoryId) ?? 0) + ae.budgetedAmount);
+    }
+
     const allCategories = await db.select().from(categories).orderBy(categories.tier, categories.name);
     const monthBudgets = await db.select().from(budgets).where(eq(budgets.month, month));
     const budgetMap = new Map(monthBudgets.map(b => [b.categoryId, b]));
 
-    const result = allCategories.map(cat => ({
-      categoryId: cat.id,
-      categoryName: cat.name,
-      tier: cat.tier,
-      color: cat.color,
-      budgetId: budgetMap.get(cat.id)?.id ?? null,
-      amount: budgetMap.get(cat.id)?.amount ?? 0,
-    }));
+    const result = allCategories
+      .filter(cat => cat.tier !== "income" && !cat.excludeFromBudget)
+      .map(cat => {
+        const fromSchedule = loanAmountMap.get(cat.id);
+        const fromSIPs     = sipAmountMap.get(cat.id);
+        const fromAnnual   = annualAmountMap.get(cat.id);
+        const autoAmount   = fromSchedule !== undefined ? fromSchedule
+          : fromSIPs    !== undefined ? fromSIPs
+          : fromAnnual  !== undefined ? fromAnnual
+          : undefined;
+        return {
+          categoryId: cat.id,
+          categoryName: cat.name,
+          tier: cat.tier,
+          color: cat.color,
+          budgetId: budgetMap.get(cat.id)?.id ?? null,
+          amount: autoAmount !== undefined ? autoAmount : (budgetMap.get(cat.id)?.amount ?? 0),
+          autoFromSchedule: fromSchedule !== undefined,
+          autoFromSIPs:     fromSIPs     !== undefined,
+          autoFromAnnual:   fromAnnual   !== undefined,
+        };
+      });
 
     return NextResponse.json(result);
   } catch (err) {

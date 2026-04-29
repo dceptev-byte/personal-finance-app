@@ -77,13 +77,27 @@ If the server isn't running, start it in the background and check `/tmp/nextjs.l
 - Streams tokens via `ReadableStream` from `/api/ai/chat`
 - Connects to local Ollama — requires Ollama running at `localhost:11434`
 
-## Pending / known todos
-- Merge categorise + verify into single click on expense rows
-- Auto-advance to next uncategorised row after picking category
-- Verification progress bar (e.g. "312 / 435 verified")
-- The ₹10K `UPI/P2M/.../LIC HFL/...` transaction is a top-up payment toward the LIC EMI; user handles manually
-- Anomaly detection: LLM explanation for flagged categories (future — add to anomalies API)
-- Net worth: investment portfolio value auto-sync from investments table `currentValue` field
+## Master Todo
+
+### Expenses
+- [x] Merge categorise + verify into single click — selecting from dropdown auto-saves + verifies
+- [x] Auto-advance to next uncategorised row after picking a category
+- [x] Verification progress bar — "X / Y verified" with colour-coded bar in card header
+- [ ] The ₹10K `UPI/P2M/.../LIC HFL/...` transaction is a top-up toward LIC EMI — user handles manually
+
+### Dashboard
+- [x] Month-over-month spend chart — built as "Spend Overview" card (dual-ring donut + 6-month bars)
+
+### Vault
+- [x] Test and verify the Vault page works end-to-end
+
+### Net Worth
+- [x] Test and verify the Net Worth page works end-to-end
+- [x] Auto-sync investment portfolio value from `investments.currentValue` field
+
+### Pacey (AI Assistant)
+- [x] Expand Pacey's context to include net worth, savings, and subscriptions data (currently only budgets, SIPs, tax)
+- [x] Anomaly detection: LLM explanation for flagged categories (add to anomalies API)
 
 ## Git
 - Remote: `https://github.com/dceptev-byte/personal-finance-app.git`

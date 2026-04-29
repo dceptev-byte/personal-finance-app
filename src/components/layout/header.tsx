@@ -23,7 +23,7 @@ export function Header() {
   const title =
     Object.entries(pageTitles).find(([path]) =>
       pathname.startsWith(path)
-    )?.[1] ?? "Finance";
+    )?.[1] ?? "Fast Pace";
 
   return (
     <header className="flex h-14 items-center justify-between border-b border-border px-6">

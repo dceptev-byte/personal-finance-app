@@ -9,8 +9,9 @@ export const categories = sqliteTable("categories", {
   name: text("name").notNull().unique(),        // e.g. "Household", "Transport"
   color: text("color").notNull().default("#6366f1"),
   icon: text("icon"),
-  // Tier controls dashboard grouping: "fixed" | "investment" | "income" | "discretionary"
+  // Tier controls dashboard grouping: "fixed" | "investment" | "income" | "discretionary" | "misc"
   tier: text("tier").notNull().default("discretionary"),
+  excludeFromBudget: integer("exclude_from_budget", { mode: "boolean" }).default(false),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
 });
 
@@ -69,6 +70,7 @@ export const annualExpenses = sqliteTable("annual_expenses", {
   budgetedAmount: real("budgeted_amount").notNull().default(0),
   actualAmount: real("actual_amount").default(0),
   dueMonth: text("due_month"),                  // "2026-04" — expected month
+  categoryId: integer("category_id").references(() => categories.id), // budget category to auto-populate
   notes: text("notes"),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
 });
@@ -96,6 +98,7 @@ export const investments = sqliteTable("investments", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   type: text("type").notNull(),                 // "Index" | "Active" | "Retirement" | "Legacy"
   fundName: text("fund_name").notNull(),         // "HDFC Nifty 100", "Parag Flexi"
+  categoryId: integer("category_id").references(() => categories.id), // which budget category this SIP belongs to
   monthlyAmount: real("monthly_amount").notNull().default(0),
   stepUpPercent: real("step_up_percent").default(10),
   stepUpMode: text("step_up_mode").default("manual"), // "manual" | "auto"
@@ -199,6 +202,24 @@ export const splitRuleItems = sqliteTable("split_rule_items", {
 });
 
 // ─────────────────────────────────────────────
+// SAVINGS (Fixed Deposits, RDs, PPF, etc.)
+// ─────────────────────────────────────────────
+export const savings = sqliteTable("savings", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),              // "SIB Fixed Deposit"
+  institution: text("institution"),          // "SIB", "HDFC"
+  type: text("type").notNull().default("fd"), // "fd" | "rd" | "ppf" | "nps" | "savings"
+  monthlyAmount: real("monthly_amount").notNull().default(0),
+  interestRate: real("interest_rate"),       // annual % e.g. 6.0
+  tenureMonths: integer("tenure_months"),    // e.g. 6
+  categoryId: integer("category_id").references(() => categories.id),
+  isActive: integer("is_active", { mode: "boolean" }).default(true),
+  notes: text("notes"),
+  createdAt: text("created_at").default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").default(sql`(datetime('now'))`),
+});
+
+// ─────────────────────────────────────────────
 // NET WORTH — ASSETS
 // ─────────────────────────────────────────────
 export const assets = sqliteTable("assets", {
@@ -264,6 +285,8 @@ export type Loan = typeof loans.$inferSelect;
 export type AmortisationRow = typeof amortisationSchedule.$inferSelect;
 export type SplitRule = typeof splitRules.$inferSelect;
 export type SplitRuleItem = typeof splitRuleItems.$inferSelect;
+export type Saving = typeof savings.$inferSelect;
+export type NewSaving = typeof savings.$inferInsert;
 export type Asset = typeof assets.$inferSelect;
 export type NewAsset = typeof assets.$inferInsert;
 export type NetWorthSnapshot = typeof netWorthSnapshots.$inferSelect;

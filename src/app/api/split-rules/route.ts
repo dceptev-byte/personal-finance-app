@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { splitRules, splitRuleItems } from "@/db/schema";
-import { eq } from "drizzle-orm";
+
 
 export async function GET() {
   const rules = await db.select().from(splitRules).orderBy(splitRules.name);
